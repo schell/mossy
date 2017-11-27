@@ -1,10 +1,13 @@
 module Mossy.Syntax where
 
-data Expr = Tr
-          | Fl
-          | Zero
-          | IsZero Expr
-          | Succ Expr
-          | Pred Expr
-          | If Expr Expr Expr
+type Name = String
+
+data Lit = LInt Int
+         | LBool Bool
+         deriving (Show, Eq)
+
+data Expr = Var Name
+          | App Expr Expr
+          | Lam Name Expr
+          | Lit Lit
           deriving (Show, Eq)

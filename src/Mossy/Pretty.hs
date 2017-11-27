@@ -1,30 +1,73 @@
-module Mossy.Pretty (
-  ppexpr
-) where
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE PackageImports       #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+module Mossy.Pretty
+  ( ppexpr
+  , ppShow
+  , pcShow
+  , PP.render
+  ) where
 
 import           Mossy.Syntax
 
-import           Text.PrettyPrint (Doc, (<+>), (<>))
-import qualified Text.PrettyPrint as PP
+import qualified Language.GLSL                  as AST
+import           Text.PrettyPrint               (Doc, char, hsep, sep, text,
+                                                 (<+>), (<>))
+import qualified Text.PrettyPrint               as PP
+import qualified Text.PrettyPrint               as PP
+import qualified "pretty" Text.PrettyPrint.HughesPJClass as PP
+import qualified "prettyclass" Text.PrettyPrint.HughesPJClass as PC
+
+class MyPretty p where
+  ppr :: Int -> p -> Doc
+
+  pp :: p -> Doc
+  pp = ppr 0
+
+instance MyPretty Name where
+  ppr _ = text
+
+
+viewVars :: Expr -> [Name]
+viewVars (Lam n a) = n : viewVars a
+viewVars _         = []
+
+viewBody :: Expr -> Expr
+viewBody (Lam _ a) = viewBody a
+viewBody x         = x
+
+viewApp :: Expr -> (Expr, [Expr])
+viewApp (App e1 e2) = go e1 [e2]
+  where
+    go (App a b) xs = go a (b : xs)
+    go f xs         = (f, xs)
+viewApp _ = error "not application"
 
 parensIf ::  Bool -> Doc -> Doc
 parensIf True  = PP.parens
 parensIf False = id
 
-class Pretty p where
-  ppr :: Int -> p -> Doc
+instance MyPretty Expr where
+  ppr p = \case
+    Lit (LInt a)  -> text $ show a
+    Lit (LBool b) -> text $ show b
+    Var x         -> text x
+    e@(App _ _)   -> let (f, xs) = viewApp e
+                     in parensIf (p > 0) $ ppr p f <+> sep (ppr (p + 1) <$> xs)
+    e@(Lam _ _)   -> let vars = map pp      $ viewVars e
+                         body = ppr (p + 1) $ viewBody e
+                     in parensIf (p > 0) $ char '\\' <>  hsep vars
+                                                     <+> "->"
+                                                     <+> body
 
-instance Pretty Expr where
-  ppr _ Zero = PP.text "0"
-  ppr _ Tr = PP.text "true"
-  ppr _ Fl = PP.text "false"
-  ppr p (Succ a) = (parensIf (p > 0) $ PP.text "succ" <+> ppr (p+1) a)
-  ppr p (Pred a) = (parensIf (p > 0) $ PP.text "succ" <+> ppr (p+1) a)
-  ppr p (IsZero a) = (parensIf (p > 0) $ PP.text "iszero" <+> ppr (p+1) a)
-  ppr p (If a b c) =
-        PP.text "if"   <+> ppr p a
-    <+> PP.text "then" <+> ppr p b
-    <+> PP.text "else" <+> ppr p c
 
 ppexpr :: Expr -> String
 ppexpr = PP.render . ppr 0
+
+pcShow :: PC.Pretty a => a -> String
+pcShow = show . PC.pPrint
+
+ppShow :: PP.Pretty a => a -> String
+ppShow = PP.prettyShow
