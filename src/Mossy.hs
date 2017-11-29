@@ -6,37 +6,40 @@ module Mossy
     , module M
     ) where
 
-import           Control.Monad            (when)
+import           Control.Monad            (when, mapM_)
 import           Control.Monad.IO.Class   (liftIO)
 import           Data.Function            (fix)
-import           Data.Maybe               (fromMaybe)
-import qualified LLVM.AST                 as AST
+import           Language.GLSL            ()
 import           System.Console.Haskeline (defaultSettings, getInputLine,
                                            outputStrLn, runInputT)
---import           Mossy.Codegen            as M
 import           Mossy.Emit               as M
 import           Mossy.Eval               as M
-import           Mossy.Parser             as M
+import           Mossy.Parser
 import           Mossy.Pretty             as M
 import           Mossy.Syntax             as M
+import           Mossy.TypeCheck          as M
 
 newtype Options = Options { optsEmitIR :: Bool }
 
-showStep :: (Int, Expr) -> IO ()
-showStep (d, x) = putStrLn $ replicate d ' ' ++ "=> " ++ ppexpr x
+showStep :: (Int, String, Expr) -> IO ()
+showStep (d, str, x) = putStrLn $ unwords [replicate d ' ', "=>", str, ppexpr x]
 
 process :: Options -> String -> IO ()
 process opts line = do
   let res = parseExpr line
   case res of
-    Left err -> print err
-    Right ex -> do
-      let (out, steps) = runEval ex
-      mapM_ showStep steps
-      print out
-      putStrLn $ replicate 80 '-'
-      when (optsEmitIR opts) $ do
-        putStrLn $ ppGLSL $ codegen ex
+    Left perr -> print perr
+    Right ex -> case check [] ex of
+      Left tyerr -> print tyerr
+      Right _ -> do
+        let (out, steps) = runEval ex
+        mapM_ showStep steps
+        putStrLn $ replicate 80 '='
+        print out
+        when (optsEmitIR opts) $ do
+          putStrLn $ replicate 80 '-'
+          unit <- codegen ex
+          putStrLn $ pcShow unit
         putStrLn $ replicate 80 '-'
 
 initOpts :: Options

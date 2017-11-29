@@ -12,10 +12,7 @@ module Mossy.Pretty
 
 import           Mossy.Syntax
 
-import qualified Language.GLSL                  as AST
-import           Text.PrettyPrint               (Doc, char, hsep, sep, text,
-                                                 (<+>), (<>))
-import qualified Text.PrettyPrint               as PP
+import           Text.PrettyPrint               (Doc, char, parens, text, (<+>))
 import qualified Text.PrettyPrint               as PP
 import qualified "pretty" Text.PrettyPrint.HughesPJClass as PP
 import qualified "prettyclass" Text.PrettyPrint.HughesPJClass as PC
@@ -26,44 +23,32 @@ class MyPretty p where
   pp :: p -> Doc
   pp = ppr 0
 
-instance MyPretty Name where
+instance MyPretty String where
   ppr _ = text
-
-
-viewVars :: Expr -> [Name]
-viewVars (Lam n a) = n : viewVars a
-viewVars _         = []
-
-viewBody :: Expr -> Expr
-viewBody (Lam _ a) = viewBody a
-viewBody x         = x
-
-viewApp :: Expr -> (Expr, [Expr])
-viewApp (App e1 e2) = go e1 [e2]
-  where
-    go (App a b) xs = go a (b : xs)
-    go f xs         = (f, xs)
-viewApp _ = error "not application"
 
 parensIf ::  Bool -> Doc -> Doc
 parensIf True  = PP.parens
 parensIf False = id
 
+instance MyPretty Type where
+  ppr _ TBool = text "Bool"
+  ppr _ TInt  = text "Nat"
+  ppr p (TArr a b) = parensIf (isArrow a) (ppr p a) <+> text "->" <+> ppr p b
+    where isArrow TArr{} = True
+          isArrow _      = False
+
 instance MyPretty Expr where
   ppr p = \case
-    Lit (LInt a)  -> text $ show a
-    Lit (LBool b) -> text $ show b
-    Var x         -> text x
-    e@(App _ _)   -> let (f, xs) = viewApp e
-                     in parensIf (p > 0) $ ppr p f <+> sep (ppr (p + 1) <$> xs)
-    e@(Lam _ _)   -> let vars = map pp      $ viewVars e
-                         body = ppr (p + 1) $ viewBody e
-                     in parensIf (p > 0) $ char '\\' <>  hsep vars
-                                                     <+> "->"
-                                                     <+> body
+    Var x -> text x
+    Lit (LInt a) -> text (show a)
+    Lit (LBool b) -> text (show b)
+    App a b -> parensIf (p>0) (ppr (p+1) a) <+> ppr p b
+    Lam x t a -> parensIf (p > 0) $ char '\\'
+                   <+> parens (text x <+> char ':' <+> ppr p t)
+                   <+> text "->"
+                   <+> ppr (p+1) a
 
-
-ppexpr :: Expr -> String
+ppexpr :: MyPretty a => a -> String
 ppexpr = PP.render . ppr 0
 
 pcShow :: PC.Pretty a => a -> String

@@ -1,15 +1,16 @@
 module Mossy.Parser where
 
 import           Data.Functor.Identity (Identity (..))
-import           Text.Parsec           (alphaNum, eof, letter, oneOf, parse,
-                                        (<|>), many1)
+import           Text.Parsec           (alphaNum, eof, letter, many1, oneOf,
+                                        parse, (<|>))
 import           Text.Parsec.Error     (ParseError)
 import           Text.Parsec.Expr      as Ex
+import qualified Text.Parsec.Expr      as Ex
+import           Text.Parsec.Language  (haskellStyle)
 import           Text.Parsec.String    (Parser)
 import           Text.Parsec.Token     (GenLanguageDef (LanguageDef),
                                         LanguageDef)
 import qualified Text.Parsec.Token     as Tok
-import           Text.Parsec.Language    (haskellStyle)
 
 import           Mossy.Syntax
 
@@ -46,6 +47,21 @@ contents p = do
 identifier :: Parser String
 identifier = Tok.identifier lexer
 --------------------------------------------------------------------------------
+-- Types
+--------------------------------------------------------------------------------
+tylit :: Parser Type
+tylit = (reservedOp "Bool" >> return TBool) <|> (reservedOp "Int" >> return TInt)
+
+type_ :: Parser Type
+type_ = Ex.buildExpressionParser tyops tyatom
+  where infixOp x f = Ex.Infix (reservedOp x >> return f)
+        tyops = [[ infixOp "->" TArr Ex.AssocRight ]]
+
+tyatom :: Parser Type
+tyatom = tylit <|> (parens type_)
+
+
+--------------------------------------------------------------------------------
 --
 --------------------------------------------------------------------------------
 natural :: Parser Integer
@@ -69,18 +85,20 @@ bool = do
 lambda :: Parser Expr
 lambda = do
   reservedOp "\\"
-  args <- many1 identifier
-  reservedOp "->"
-  body <- expr
-  return $ foldr Lam body args
+  x <- identifier
+  reservedOp ":"
+  t <- type_
+  reservedOp "."
+  e <- expr
+  return $ Lam x t e
 
 lit :: Parser Expr
 lit = number <|> bool
 
 term :: Parser Expr
 term =  parens expr
-    <|> variable
     <|> lit
+    <|> variable
     <|> lambda
 
 expr :: Parser Expr

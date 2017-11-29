@@ -9,7 +9,7 @@ import           Control.Monad.Writer
 
 import           Mossy.Syntax
 
-type Step = (Int, Expr)
+type Step = (Int, String, Expr)
 
 newtype EvalState = EvalState { depth :: Int
                               } deriving (Show)
@@ -33,10 +33,10 @@ inc m = do
   modify $ \s -> s{ depth = depth s - 1 }
   return out
 
-red :: Expr -> Eval ()
-red x = do
+red :: String -> Expr -> Eval ()
+red str x = do
   d <- gets depth
-  tell [(d, x)]
+  tell [(d, str, x)]
   return ()
 
 extend :: Scope -> String -> Value -> Scope
@@ -51,14 +51,16 @@ eval env expr = case expr of
   Lit (LInt i)  -> return $ VInt i
   Lit (LBool b) -> return $ VBool b
   Var x -> do
-    red expr
+    red "variable" expr
     return $ env M.! x
-  Lam x body -> inc $ return $ VClosure x body env
+  Lam x _ body -> inc $ do
+    red "lamda" body
+    return $ VClosure x body env
   App a b    -> inc $ do
     x <- eval env a
-    red a
+    red "apply lhs" a
     y <- eval env b
-    red b
+    red "apply rhs" b
     apply x y
 
 runEval :: Expr -> (Value, [Step])

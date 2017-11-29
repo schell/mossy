@@ -1,13 +1,16 @@
-module Mossy.Syntax where
+module Mossy.Syntax
+  ( module Mossy.Syntax
+  , module Type
+  ) where
 
-type Name = String
+import Mossy.Type as Type
 
-data Lit = LInt Int
-         | LBool Bool
-         deriving (Show, Eq)
+data Ground = LInt Int
+            | LBool Bool
+            deriving (Show, Eq)
 
-data Expr = Var Name
+data Expr = Var String
+          | Lit Ground
           | App Expr Expr
-          | Lam Name Expr
-          | Lit Lit
+          | Lam String Type Expr
           deriving (Show, Eq)

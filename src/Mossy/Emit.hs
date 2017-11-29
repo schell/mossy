@@ -1,79 +1,98 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Mossy.Emit where
 
-import           Control.Monad             (void)
-import           Data.String               (fromString)
+import           Control.Monad          (void)
+import           Control.Monad.IO.Class (liftIO)
+import           Control.Monad.State
+import           Data.String            (fromString)
 --import qualified LLVM.AST                  as AST
 --import qualified LLVM.AST.Constant         as C
 --import qualified LLVM.AST.IntegerPredicate as IP
 --import qualified LLVM.AST.Type             as T
-import Language.GLSL
+import           Language.GLSL.Syntax   as AST
 
-import           Mossy.Codegen
+--import           Mossy.Codegen
 import           Mossy.JIT
-import           Mossy.Syntax              as S
+import           Mossy.Eval
+import           Mossy.Pretty           (pcShow)
+import qualified Mossy.Syntax           as S
 
---constantTrue :: AST.Operand
---constantTrue  = constant $ C.Int 1 1
---
---constantFalse :: AST.Operand
---constantFalse = constant $ C.Int 1 0
---
---constantZero :: AST.Operand
---constantZero  = constant $ C.Int 32 0
---
---constantOne :: AST.Operand
---constantOne  = constant $ C.Int 32 1
---
---cgen :: S.Expr -> Codegen AST.Operand
---cgen = \case
---  S.Tr     -> return constantTrue
---  S.Fl     -> return constantFalse
---  S.Zero   -> return constantZero
---  S.IsZero expr -> do
---    x <- cgen expr
---    icmp IP.EQ x constantZero
---  S.Succ expr -> do
---    x <- cgen expr
---    iadd x constantOne
---  S.Pred expr -> do
---    x <- cgen expr
---    isub x constantOne
---  S.If ifexpr tr fl -> do
---    -- make our blocks
---    ifthen <- addBlock $ fromString "if.then"
---    ifelse <- addBlock $ fromString "if.else"
---    ifexit <- addBlock $ fromString "if.exit"
---
---    -- %entry
---    ----------
---    cond <- cgen ifexpr
---    test <- icmp IP.NE constantZero cond
---    -- Branch based on condition
---    void $ cbr test ifthen ifelse
---
---    -- if.then
---    ----------
---    setBlock ifthen
---    -- Generate the true branch code
---    trval <- cgen tr
---    -- Branch to the merge block
---    void $ br ifexit
---    ifthen1 <- getBlock
---
---    -- if.else
---    ----------
---    setBlock ifelse
---    -- Generate the false branch code
---    flval <- cgen fl
---    void $ br ifexit
---    ifelse1 <- getBlock
---
---    -- if.exit
---    ----------
---    setBlock ifexit
---    phi T.double [(trval, ifthen1), (flval, ifelse1)]
---
+--------------------------------------------------------------------------------
+-- Basic Expressions
+--------------------------------------------------------------------------------
+constantTrue :: Expr
+constantTrue  = BoolConstant True
+
+constantFalse :: Expr
+constantFalse = BoolConstant False
+
+constantZero :: Expr
+constantZero  = IntConstant Decimal 0
+
+constantOne :: Expr
+constantOne  = IntConstant Decimal 1
+
+int :: Int -> Expr
+int = IntConstant Decimal . toInteger
+
+bool :: Bool -> Expr
+bool = BoolConstant
+
+var :: String -> Expr
+var = Variable
+
+--------------------------------------------------------------------------------
+-- Building the code generator
+--------------------------------------------------------------------------------
+data CodegenState a = CS { csDecls :: [a]
+                         , csNextK :: Word
+                         }
+
+emptyEx :: CodegenState a
+emptyEx = CS [] 0
+
+type Codegen a  = StateT (CodegenState a)
+type CodegenEx  = Codegen ExternalDeclaration
+type CodegenMid = Codegen Statement
+
+data GLSLType = GLSLType { glslType       :: TypeSpecifierNonArray
+                         , glslArrayStuff :: Maybe (Maybe Expr)
+                         } deriving (Show, Eq)
+
+toGLSLTypeSpec :: GLSLType -> TypeSpecifier
+toGLSLTypeSpec (GLSLType retty rettyarr) =
+  TypeSpec Nothing $ TypeSpecNoPrecision retty rettyarr
+
+decl :: Monad m => a -> Codegen a m ()
+decl decl = modify $ \s -> s{ csDecls = csDecls s ++ [decl] }
+
+initialized :: Monad m => GLSLType -> String -> Maybe Expr -> CodegenEx m Expr
+initialized glslTyp name mayExpr = do
+  let typespec = toGLSLTypeSpec glslTyp
+      initDecl = InitDecl name Nothing mayExpr
+  decl $ Declaration $ InitDeclaration (TypeDeclarator $ FullType Nothing typespec) [initDecl]
+  return $ Variable name
+
+uninitialized :: Monad m => GLSLType -> String -> CodegenEx m Expr
+uninitialized glslTyp name = initialized glslTyp name Nothing
+
+fresh :: Monad m => Codegen a m Word
+fresh = do
+  CS decls k <- get
+  put $ CS decls $ succ k
+  return k
+
+runNewEx :: Monad m => Codegen a m b -> m (b, CodegenState a)
+runNewEx m = runStateT m emptyEx
+
+cgen :: S.Expr -> CodegenEx IO Expr
+cgen expr = case fst $ runEval expr of
+  VInt i -> return $ int i
+  VBool b -> return $ bool b
+  VClosure param body env -> undefined
+
+
 --codegenTop :: S.Expr -> LLVM ()
 --codegenTop expr = define T.void (fromString "main") [] blks
 --  -- we currently don't have any top level declarations in mossy
@@ -83,8 +102,17 @@ import           Mossy.Syntax              as S
 --          void $ cgen expr
 --          retVoid
 
-codegenTop :: S.Expr -> TranslationUnit
-codegenTop = undefined
+voidType :: GLSLType
+voidType = GLSLType Void Nothing
+
+--codegenMain :: Codegen Expr -> GLSL ()
+--codegenMain code = define voidType "main" [] blks
+--  where blks = createBlocks $ execCodegen $ do
+--          ent <- addBlock entryBlockName
+--          _   <- setBlock ent
+--          a   <- code
+--          ret $ Just a
+
 ---------------------------------------------------------------------------------
 ---- Compilation
 ---------------------------------------------------------------------------------
@@ -92,5 +120,13 @@ codegenTop = undefined
 --codegen mdl fns = runJIT oldast
 --  where modn   = mapM codegenTop fns
 --        oldast = runLLVM mdl modn
-codegen :: S.Expr -> TranslationUnit
-codegen = codegenTop
+codegen :: S.Expr -> IO TranslationUnit
+codegen expr = do
+  (outExpr, cs) <- runNewEx $ cgen expr
+  print outExpr
+  return $ TranslationUnit $ csDecls cs
+
+--test = putStrLn $ pcShow $ TranslationUnit $ runGLSL [] $ codegenMain testComp
+--
+--testComp :: Codegen ()
+--testComp = undefined
